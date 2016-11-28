@@ -182,8 +182,19 @@ func (leaf *pathLeaf) match(wildcardValues []string) bool {
 
 	for i, r := range leaf.regexps {
 		if r != nil {
-			if !r.MatchString(wildcardValues[i]) {
-				return false
+			// If there are no groups, check a simple match.
+			if r.NumSubexp() == 0 {
+				if !r.MatchString(wildcardValues[i]) {
+					return false
+				}
+			} else {
+				// Otherwise, there is a group. If we match, use the first group.
+				match := r.FindStringSubmatch(wildcardValues[i])
+				if match != nil {
+					wildcardValues[i] = match[1]
+				} else {
+					return false
+				}
 			}
 		}
 	}
