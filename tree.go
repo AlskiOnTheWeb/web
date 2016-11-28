@@ -44,6 +44,9 @@ type pathLeaf struct {
 
 	// If true, this leaf has a pathparam that matches the rest of the path
 	matchesFullPath bool
+
+	// If true, there are no regexp groups in this leaf
+	hasGroupMatches bool
 }
 
 func newPathNode() *pathNode {
@@ -57,10 +60,13 @@ func (pn *pathNode) add(path string, route *route) {
 func (pn *pathNode) addInternal(segments []string, route *route, wildcards []string, regexps []*regexp.Regexp) {
 	if len(segments) == 0 {
 		allNilRegexps := true
+		hasGroupMatches := false
 		for _, r := range regexps {
 			if r != nil {
 				allNilRegexps = false
-				break
+				if r.NumSubexp() > 0 {
+					hasGroupMatches = true
+				}
 			}
 		}
 		if allNilRegexps {
@@ -72,7 +78,7 @@ func (pn *pathNode) addInternal(segments []string, route *route, wildcards []str
 			matchesFullPath = wildcards[len(wildcards)-1] == "*"
 		}
 
-		pn.leaves = append(pn.leaves, &pathLeaf{route: route, wildcards: wildcards, regexps: regexps, matchesFullPath: matchesFullPath})
+		pn.leaves = append(pn.leaves, &pathLeaf{route: route, wildcards: wildcards, regexps: regexps, matchesFullPath: matchesFullPath, hasGroupMatches: hasGroupMatches})
 		sort.Stable(pn.leaves)
 	} else { // len(segments) >= 1
 		seg := segments[0]
@@ -180,24 +186,45 @@ func (leaf *pathLeaf) match(wildcardValues []string) bool {
 		panic("bug: invariant violated")
 	}
 
-	for i, r := range leaf.regexps {
-		if r != nil {
-			// If there are no groups, check a simple match.
-			if r.NumSubexp() == 0 {
-				if !r.MatchString(wildcardValues[i]) {
-					return false
-				}
-			} else {
-				// Otherwise, there is a group. If we match, use the first group.
-				match := r.FindStringSubmatch(wildcardValues[i])
-				if match != nil {
-					wildcardValues[i] = match[1]
+	if leaf.hasGroupMatches {
+		// Find all the match groups
+		l := len(wildcardValues)
+		matchedGroups := make([]string, l)
+		for i, r := range leaf.regexps {
+			if r != nil {
+				// If there are no groups, check a simple match.
+				if r.NumSubexp() == 0 {
+					if !r.MatchString(wildcardValues[i]) {
+						return false
+					} else {
+						matchedGroups[i] = wildcardValues[i]
+					}
 				} else {
+					// Otherwise, there is a group. If we match, use the first group.
+					match := r.FindStringSubmatch(wildcardValues[i])
+					if match != nil {
+						matchedGroups[i] = match[1]
+					} else {
+						return false
+					}
+				}
+			}
+		}
+
+		// If we made it this far, set our values in.
+		for n := 0; n < l; n++ {
+			wildcardValues[n] = matchedGroups[n]
+		}
+	} else {
+		for i, r := range leaf.regexps {
+			if r != nil {
+				if !r.MatchString(wildcardValues[i]) {
 					return false
 				}
 			}
 		}
 	}
+
 	return true
 }
 
